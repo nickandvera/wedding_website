@@ -636,6 +636,7 @@ footer .admin-trigger:hover{opacity:.7}
         <button class="admin-tab" onclick="aTab('seating')">Seating Chart</button>
         <button class="admin-tab" onclick="aTab('photos')">Photos</button>
         <button class="admin-tab" onclick="aTab('email')">Email Setup</button>
+        <button class="admin-tab" onclick="aTab('cloud')">Cloud Sync</button>
         <button class="admin-tab" onclick="aTab('export')">Export</button>
       </div>
       <div class="admin-body">
@@ -696,7 +697,8 @@ footer .admin-trigger:hover{opacity:.7}
             2. Add an Email Service (Gmail, Outlook, etc.) and copy your <strong>Service ID</strong><br/>
             3. Create an Email Template with variables: <code>{{to_name}}</code>, <code>{{to_email}}</code>, <code>{{rsvp_summary}}</code>, <code>{{notes}}</code><br/>
             4. Copy your <strong>Template ID</strong> and <strong>Public Key</strong> and paste below<br/>
-            5. Click Save — guests will receive confirmation emails automatically
+            5. Click Save — guests will receive confirmation emails automatically<br/>
+            6. Put your own address in <strong>Admin Notification Email</strong> below to get a copy of every RSVP by email. Leave <strong>Admin Template ID</strong> blank to reuse the guest template, or create a separate template addressed to yourself for a cleaner summary.
           </div>
           <div class="emailjs-setup">
             <h4>Your EmailJS Credentials</h4>
@@ -728,6 +730,41 @@ footer .admin-trigger:hover{opacity:.7}
           </div>
         </div>
 
+        <!-- CLOUD SYNC -->
+        <div id="tab-cloud" class="admin-section">
+          <div class="info-box">
+            <strong>Cloud Sync (free — Firebase Firestore)</strong><br/>
+            Without this, RSVPs are saved only in the browser of whoever submits them, so you can only see RSVPs made from your own device. Connecting a free Firestore database lets every RSVP — from any guest, on any device — sync to the cloud, so you always see all of them here, no matter which device or browser you use to log in.<br/><br/>
+            1. Go to <a href="https://console.firebase.google.com" target="_blank" style="color:var(--gold)">console.firebase.google.com</a> and create a free project<br/>
+            2. In the project, open <strong>Build → Firestore Database</strong> and click "Create database" (start in <strong>test mode</strong> is fine to begin)<br/>
+            3. Click the <strong>⚙ gear icon → Project settings</strong>, scroll to "Your apps", click the <strong>&lt;/&gt; (web)</strong> icon, and register an app (no hosting needed)<br/>
+            4. Copy the config values shown (apiKey, authDomain, projectId, etc.) and paste them below<br/>
+            5. In Firestore, go to the <strong>Rules</strong> tab and set:
+            <code style="font-size:.78rem;background:var(--cream2);padding:.6rem .8rem;display:block;margin-top:.4rem;line-height:1.7;color:var(--bark)">rules_version = '2';<br/>service cloud.firestore {<br/>&nbsp;&nbsp;match /databases/{database}/documents {<br/>&nbsp;&nbsp;&nbsp;&nbsp;match /rsvps/{doc} {<br/>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;allow read, write: if true;<br/>&nbsp;&nbsp;&nbsp;&nbsp;}<br/>&nbsp;&nbsp;}<br/>}</code>
+            <span style="display:block;margin-top:.5rem">Since this site has no real user accounts, anyone who has these config values (visible in the page source, same as the admin password already is) could technically read or write RSVP data directly in Firestore — there's no way around that without building a full login system. This matches the security level the admin password already provides; it's meant to keep casual visitors out, not to withstand a determined attacker.</span>
+          </div>
+          <div class="emailjs-setup">
+            <h4>Your Firebase Credentials</h4>
+            <div class="setup-grid">
+              <div><span class="field-label">API Key</span><input class="admin-input" id="fb-apikey" placeholder="AIzaSy..."/></div>
+              <div><span class="field-label">Auth Domain</span><input class="admin-input" id="fb-authdomain" placeholder="your-project.firebaseapp.com"/></div>
+              <div><span class="field-label">Project ID</span><input class="admin-input" id="fb-projectid" placeholder="your-project"/></div>
+              <div><span class="field-label">Storage Bucket</span><input class="admin-input" id="fb-storagebucket" placeholder="your-project.appspot.com"/></div>
+              <div><span class="field-label">Messaging Sender ID</span><input class="admin-input" id="fb-sender" placeholder="1234567890"/></div>
+              <div><span class="field-label">App ID</span><input class="admin-input" id="fb-appid" placeholder="1:1234567890:web:abcdef"/></div>
+            </div>
+            <div class="save-bar">
+              <span class="save-note">Credentials are stored locally in this browser and used to connect to your Firestore database.</span>
+              <span class="saved-msg" id="cloud-saved">Saved ✓</span>
+              <button class="admin-btn" onclick="saveCloudConfig()">Save Credentials</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:.75rem;align-items:center;margin-top:1rem">
+            <button class="admin-btn-sm" onclick="syncRSVPsFromCloud(()=>{renderRSVPs();document.getElementById('cloud-sync-status').textContent='Synced ✓ ('+rsvps.length+' RSVPs loaded)'})">↻ Sync Now</button>
+            <span id="cloud-sync-status" style="font-size:.82rem;color:var(--stone)"></span>
+          </div>
+        </div>
+
         <!-- EXPORT -->
         <div id="tab-export" class="admin-section">
           <p style="font-size:.84rem;color:var(--stone);margin-bottom:1.5rem">Download your data as CSV files for use in spreadsheets or as a backup.</p>
@@ -748,6 +785,8 @@ footer .admin-trigger:hover{opacity:.7}
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <script>
 // ══════════════════════════════════════════════════════
 // CONSTANTS & STATE
@@ -846,8 +885,11 @@ let guests    = load('nv_guests', DEFAULT_GUESTS);
 let rsvps     = load('nv_rsvps', []);
 let seating   = load('nv_seating', []);
 let emailConf = load('nv_email', {pubkey:'',service:'',template:'',adminEmail:'',adminTemplate:''});
+let cloudConf = load('nv_cloud', {apiKey:'',authDomain:'',projectId:'',storageBucket:'',messagingSenderId:'',appId:''});
 let photos    = load('nv_photos', {});
 let currentG  = null;
+let fbApp     = null;
+let db        = null;
 
 // ══════════════════════════════════════════════════════
 // LANGUAGE
@@ -1002,24 +1044,35 @@ function doSubmit(){
   if(idx>=0) rsvps[idx]=entry; else rsvps.push(entry);
   save('nv_rsvps',rsvps);
 
-  // Send email if configured
-  if(emailConf.pubkey && email){
-    try{
-      emailjs.init(emailConf.pubkey);
-      const summary=invited.map(ev=>{
-        const evName=lang==='sv'?ev.nameSv:ev.nameEn;
-        return `${evName}: ${responses[ev.id]==='yes'?'Attending':'Declined'}`;
-      }).join('\n');
-      emailjs.send(emailConf.service, emailConf.template, {
-        to_name:currentG.name, to_email:email, rsvp_summary:summary, notes:notes||'None'
-      });
-      if(emailConf.adminEmail && emailConf.adminTemplate){
-        emailjs.send(emailConf.service, emailConf.adminTemplate, {
-          guest_name:currentG.name, guest_email:email, rsvp_summary:summary, notes:notes||'None',
-          to_email:emailConf.adminEmail
+  // Sync to cloud so this RSVP shows up in the admin panel from any device (see Cloud Sync tab)
+  if(db){
+    db.collection('rsvps').doc(currentG.id).set(entry).catch(e=>console.log('Cloud save failed:',e));
+  }
+
+  // Send emails if EmailJS is configured
+  if(emailConf.pubkey && emailConf.service){
+    try{emailjs.init(emailConf.pubkey)}catch(e){}
+    const summary=invited.map(ev=>{
+      const evName=lang==='sv'?ev.nameSv:ev.nameEn;
+      return `${evName}: ${responses[ev.id]==='yes'?'Attending':'Declined'}`;
+    }).join('\n');
+    // Guest confirmation
+    if(email && emailConf.template){
+      try{
+        emailjs.send(emailConf.service, emailConf.template, {
+          to_name:currentG.name, to_email:email, rsvp_summary:summary, notes:notes||'None'
         });
-      }
-    }catch(e){console.log('EmailJS:',e)}
+      }catch(e){console.log('EmailJS (guest):',e)}
+    }
+    // Admin copy — sent for every RSVP, even if the guest didn't give an email
+    if(emailConf.adminEmail){
+      try{
+        emailjs.send(emailConf.service, emailConf.adminTemplate||emailConf.template, {
+          to_name:currentG.name, to_email:emailConf.adminEmail,
+          guest_name:currentG.name, guest_email:email||'(not provided)', rsvp_summary:summary, notes:notes||'None'
+        });
+      }catch(e){console.log('EmailJS (admin):',e)}
+    }
   }
 
   const attending=Object.values(responses).filter(v=>v==='yes').length;
@@ -1046,7 +1099,15 @@ function checkPw(){
     document.getElementById('admin-login').style.display='none';
     document.getElementById('admin-main').style.display='flex';
     loadEmailConfig();
+    loadCloudConfig();
     renderGuests();renderRSVPs();renderSeating();renderPhotos();
+    const status=document.getElementById('cloud-sync-status');
+    if(db){
+      if(status) status.textContent='Syncing...';
+      syncRSVPsFromCloud(()=>{ renderRSVPs(); if(status) status.textContent='Synced ✓ ('+rsvps.length+' RSVPs loaded)'; });
+    } else if(status){
+      status.textContent = cloudConf.apiKey ? 'Could not connect — check your values.' : 'Not connected — set up Cloud Sync below to see RSVPs from all devices.';
+    }
   } else {
     document.getElementById('pw-error').style.display='block';
   }
@@ -1054,7 +1115,7 @@ function checkPw(){
 
 function aTab(t){
   document.querySelectorAll('.admin-tab').forEach((el,i)=>{
-    const tabs=['guests','rsvps','seating','photos','email','export'];
+    const tabs=['guests','rsvps','seating','photos','email','cloud','export'];
     el.classList.toggle('active',tabs[i]===t);
   });
   document.querySelectorAll('.admin-section').forEach(s=>s.classList.remove('active'));
@@ -1320,6 +1381,59 @@ function saveEmailConfig(){
   const m=document.getElementById('email-saved');m.classList.add('show');setTimeout(()=>m.classList.remove('show'),2000);
 }
 
+// ── CLOUD SYNC (FIREBASE) ──
+function loadCloudConfig(){
+  document.getElementById('fb-apikey').value=cloudConf.apiKey||'';
+  document.getElementById('fb-authdomain').value=cloudConf.authDomain||'';
+  document.getElementById('fb-projectid').value=cloudConf.projectId||'';
+  document.getElementById('fb-storagebucket').value=cloudConf.storageBucket||'';
+  document.getElementById('fb-sender').value=cloudConf.messagingSenderId||'';
+  document.getElementById('fb-appid').value=cloudConf.appId||'';
+}
+function saveCloudConfig(){
+  cloudConf={
+    apiKey:document.getElementById('fb-apikey').value.trim(),
+    authDomain:document.getElementById('fb-authdomain').value.trim(),
+    projectId:document.getElementById('fb-projectid').value.trim(),
+    storageBucket:document.getElementById('fb-storagebucket').value.trim(),
+    messagingSenderId:document.getElementById('fb-sender').value.trim(),
+    appId:document.getElementById('fb-appid').value.trim(),
+  };
+  save('nv_cloud',cloudConf);
+  initCloud();
+  const m=document.getElementById('cloud-saved');m.classList.add('show');setTimeout(()=>m.classList.remove('show'),2000);
+  const status=document.getElementById('cloud-sync-status');
+  if(status) status.textContent = db ? 'Connected ✓' : 'Could not connect — check your values.';
+}
+function initCloud(){
+  if(!cloudConf.apiKey||!cloudConf.projectId) return;
+  try{
+    if(!fbApp){
+      fbApp = firebase.apps && firebase.apps.length ? firebase.app() : firebase.initializeApp({
+        apiKey:cloudConf.apiKey, authDomain:cloudConf.authDomain, projectId:cloudConf.projectId,
+        storageBucket:cloudConf.storageBucket, messagingSenderId:cloudConf.messagingSenderId, appId:cloudConf.appId
+      });
+    }
+    db = firebase.firestore();
+  }catch(e){ console.log('Firebase init failed:',e); db=null; }
+}
+function syncRSVPsFromCloud(cb){
+  if(!db){ if(cb) cb(); return; }
+  db.collection('rsvps').get().then(snap=>{
+    snap.forEach(doc=>{
+      const data=doc.data();
+      const idx=rsvps.findIndex(r=>r.guestId===data.guestId);
+      if(idx>=0){
+        if(new Date(data.submittedAt) >= new Date(rsvps[idx].submittedAt)) rsvps[idx]=data;
+      } else {
+        rsvps.push(data);
+      }
+    });
+    save('nv_rsvps',rsvps);
+    if(cb) cb();
+  }).catch(e=>{ console.log('Cloud sync failed:',e); if(cb) cb(); });
+}
+
 // ── EXPORTS ──
 function toCSV(rows){return rows.map(r=>r.map(c=>'"'+String(c||'').replace(/"/g,'""')+'"').join(',')).join('\n')}
 function download(filename,content){
@@ -1371,6 +1485,7 @@ startCountdown();
 applyPhotos();
 initReveal();
 if(emailConf.pubkey) try{emailjs.init(emailConf.pubkey)}catch(e){}
+initCloud();
 </script>
 </body>
 </html>
