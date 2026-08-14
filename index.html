@@ -258,7 +258,12 @@ footer .admin-trigger:hover{opacity:.7}
   nav{padding:0 1.25rem}
   .nav-links{display:none}
   .hamburger{display:flex}
-  .hero-photos img,.event-photo,.poi-img{object-fit:contain;background:var(--cream2)}
+  .event-photo,.poi-img{object-fit:contain;background:var(--cream2)}
+  .hero-photos{grid-template-columns:1fr}
+  .hero-photos img:first-child{display:none}
+  .hero-photos img{object-fit:cover}
+  .photo-strip{grid-template-columns:1fr;height:420px}
+  .photo-strip img:not(:first-child){display:none}
   .travel-grid{grid-template-columns:1fr}
   .seating-canvas{grid-template-columns:1fr}
   .setup-grid{grid-template-columns:1fr}
